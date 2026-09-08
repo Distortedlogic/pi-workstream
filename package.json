@@ -53,14 +53,9 @@
 		"packages/core/dist",
 		"packages/core/package.json",
 		"packages/tui/dist",
-		"packages/tui/package.json",
-		"skills",
-		"LICENSE",
-		"README.md",
-		"THIRD_PARTY_NOTICES.md"
+		"packages/tui/package.json"
 	],
 	"pi": {
-		"extensions": ["./src/index.ts"],
-		"skills": ["./skills"]
+		"extensions": ["./src/index.ts"]
 	}
 }
