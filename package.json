@@ -1,6 +1,6 @@
 {
 	"name": "pi-workstream",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "A single native Pi workstream engine for plan execution and context compression.",
 	"private": true,
 	"repository": {
@@ -19,8 +19,8 @@
 		"format": "biome check --write ."
 	},
 	"dependencies": {
+		"@pi-context-tree/core": "0.1.1",
 		"@sindresorhus/slugify": "^2.2.1",
-		"fast-glob": "^3.3.3",
 		"mdast-util-to-string": "^4.0.0",
 		"remark-gfm": "^4.0.1",
 		"remark-parse": "^11.0.0",
@@ -30,15 +30,11 @@
 		"write-file-atomic": "^6.0.0"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-ai": "*",
-		"@earendil-works/pi-coding-agent": "*",
-		"@earendil-works/pi-tui": "*"
+		"@earendil-works/pi-coding-agent": "*"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
-		"@earendil-works/pi-ai": "0.84.3",
 		"@earendil-works/pi-coding-agent": "0.84.3",
-		"@earendil-works/pi-tui": "0.84.3",
 		"@types/mdast": "^4.0.4",
 		"@types/node": "^22.10.0",
 		"@types/write-file-atomic": "^4.0.3",
@@ -46,6 +42,6 @@
 	},
 	"files": ["src"],
 	"pi": {
-		"extensions": ["./src/index.ts"]
+		"extensions": ["./src/workstream.ts"]
 	}
 }
