@@ -1,60 +1,50 @@
 {
 	"name": "pi-workstream",
-	"version": "0.1.0",
-	"description": "One native Pi extension for plans, queued work, todo state, and reviewed context compression.",
+	"version": "0.2.0",
+	"description": "A single native Pi workstream engine for plan execution and context compression.",
 	"private": true,
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/Distortedlogic/pi-workstream.git"
 	},
-	"homepage": "https://github.com/Distortedlogic/pi-workstream#readme",
+	"homepage": "https://github.com/Distortedlogic/pi-workstream",
 	"type": "module",
-	"workspaces": ["packages/*"],
-	"license": "MIT",
 	"engines": {
 		"node": ">=22.19.0"
 	},
 	"scripts": {
-		"build:libs": "npm run build --workspace @pi-context-tree/core && npm run build --workspace @pi-context-tree/tui",
-		"prepare": "npm run build:libs",
-		"check": "npm run build:libs && npm run typecheck && npm run lint",
+		"check": "npm run typecheck && npm run lint",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"format": "biome check --write ."
 	},
 	"dependencies": {
-		"@juicesharp/rpiv-config": "^2.7.1",
-		"@pi-context-tree/core": "file:packages/core",
-		"@pi-context-tree/tui": "file:packages/tui",
-		"typebox": "1.3.7"
+		"@sindresorhus/slugify": "^2.2.1",
+		"fast-glob": "^3.3.3",
+		"mdast-util-to-string": "^4.0.0",
+		"remark-gfm": "^4.0.1",
+		"remark-parse": "^11.0.0",
+		"typebox": "1.3.7",
+		"unified": "^11.0.5",
+		"unist-util-visit": "^5.0.0",
+		"write-file-atomic": "^6.0.0"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",
-		"@earendil-works/pi-tui": "*",
-		"@juicesharp/rpiv-i18n": "*"
-	},
-	"peerDependenciesMeta": {
-		"@juicesharp/rpiv-i18n": {
-			"optional": true
-		}
+		"@earendil-works/pi-tui": "*"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
 		"@earendil-works/pi-ai": "0.84.3",
 		"@earendil-works/pi-coding-agent": "0.84.3",
 		"@earendil-works/pi-tui": "0.84.3",
-		"@juicesharp/rpiv-i18n": "^2.7.1",
+		"@types/mdast": "^4.0.4",
 		"@types/node": "^22.10.0",
+		"@types/write-file-atomic": "^4.0.3",
 		"typescript": "^5.7.0"
 	},
-	"files": [
-		"src",
-		"packages/core/dist",
-		"packages/core/package.json",
-		"packages/tui/dist",
-		"packages/tui/package.json"
-	],
+	"files": ["src"],
 	"pi": {
 		"extensions": ["./src/index.ts"]
 	}

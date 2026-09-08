@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import registerContextTree from "./context/index.ts";
-import registerQueue from "./queue/index.ts";
-import registerTodo from "./todo/index.ts";
+import { registerWorkstreamCommand } from "./commands.ts";
+import { WorkstreamRuntime } from "./engine/runtime.ts";
+import { registerWorkstreamTool } from "./tools.ts";
 
-/** Register the complete plan, queue, todo, and context workstream. */
-export default function registerPiWorkstream(pi: ExtensionAPI): void {
-	registerTodo(pi);
-	registerQueue(pi);
-	registerContextTree(pi);
+export default function piWorkstream(pi: ExtensionAPI): void {
+	const runtime = new WorkstreamRuntime(pi);
+	runtime.registerLifecycle();
+	registerWorkstreamCommand(pi, runtime);
+	registerWorkstreamTool(pi, runtime);
 }

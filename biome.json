@@ -1,7 +1,7 @@
 {
 	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
 	"files": {
-		"ignore": ["**/dist/**", "**/node_modules/**"]
+		"ignore": ["**/node_modules/**"]
 	},
 	"formatter": {
 		"enabled": true,
@@ -11,19 +11,7 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
-			"suspicious": {
-				"noConfusingVoidType": "off",
-				"noControlCharactersInRegex": "off",
-				"noExplicitAny": "off"
-			},
-			"performance": {
-				"noDelete": "off"
-			},
-			"style": {
-				"noNonNullAssertion": "off",
-				"useTemplate": "off"
-			}
+			"recommended": true
 		}
 	},
 	"javascript": {
