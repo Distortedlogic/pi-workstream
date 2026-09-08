@@ -8,7 +8,6 @@ import {
 	type BatchSnapshot,
 	BatchSnapshotSchema,
 	ERR_PLAN_BINDING,
-	PLAN_ROOT,
 	type Plan,
 	Sha256Schema,
 	batchById,
@@ -17,6 +16,7 @@ import {
 	firstIncompleteBatch,
 	loadPlan,
 	nextIncompleteBatch,
+	planRoot,
 	sameBitmap,
 	sameSnapshot,
 	savePlan,
@@ -121,7 +121,9 @@ class Workstream {
 								"Create or refine a workstream plan",
 								"# Plan title\n\n## Batch 1\n\n- [ ] First task\n",
 							);
-							if (markdown?.trim()) ctx.ui.notify(`Saved ${(await savePlan(markdown)).path}`, "info");
+							if (markdown?.trim()) {
+								ctx.ui.notify(`Saved ${(await savePlan(markdown, planRoot(ctx.cwd))).path}`, "info");
+							}
 							return;
 						}
 						case "run":
@@ -211,7 +213,7 @@ class Workstream {
 		this.#states.set(sid(ctx), state);
 		if (state.phase === "running" || state.phase === "review") {
 			try {
-				const plan = await findPlan(state.batch.planId);
+				const plan = await findPlan(state.batch.planId, planRoot(ctx.cwd));
 				this.#plans.set(sid(ctx), plan);
 				if (state.phase === "review" && hasCompression(ctx, state.runId, state.batch.batchId)) {
 					await this.advance(ctx, state, plan);
@@ -228,7 +230,7 @@ class Workstream {
 	private async plan(ctx: ExtensionContext, planId: string): Promise<Plan> {
 		const cached = this.#plans.get(sid(ctx));
 		if (cached?.id === planId) return cached;
-		const plan = await findPlan(planId);
+		const plan = await findPlan(planId, planRoot(ctx.cwd));
 		this.#plans.set(sid(ctx), plan);
 		return plan;
 	}
@@ -239,8 +241,9 @@ class Workstream {
 			throw new Error("A workstream run is already active.");
 		}
 		const plan = await loadPlan(path);
-		const location = relative(PLAN_ROOT, plan.path);
-		if (location.startsWith("..") || isAbsolute(location)) throw new Error(`Plans must be stored under ${PLAN_ROOT}.`);
+		const root = planRoot(ctx.cwd);
+		const location = relative(root, plan.path);
+		if (location.startsWith("..") || isAbsolute(location)) throw new Error(`Plans must be stored under ${root}.`);
 		const batch = firstIncompleteBatch(plan);
 		if (!batch) throw new Error("The selected plan has no incomplete batch.");
 		const runId = randomUUID();
@@ -321,7 +324,7 @@ class Workstream {
 		const [compression, source] = prepareCompression(ctx, state.batchStartEntryId);
 		const summary = await reviewSummary(ctx, source);
 		if (!summary) return;
-		const plan = await findPlan(state.batch.planId);
+		const plan = await findPlan(state.batch.planId, planRoot(ctx.cwd));
 		const batch = batchById(plan, state.batch.batchId);
 		if (!batch) throw new Error(ERR_PLAN_BINDING);
 		const freshState = snapshot(plan, batch);

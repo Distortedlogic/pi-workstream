@@ -11,7 +11,7 @@ import { unified } from "unified";
 import { visit } from "unist-util-visit";
 import writeFileAtomic from "write-file-atomic";
 
-export const PLAN_ROOT = resolve(process.cwd(), ".pi", "plans");
+export const planRoot = (cwd: string): string => resolve(cwd, ".pi", "plans");
 export const ERR_PLAN_BINDING = "The bound plan is missing, duplicated, or different.";
 const ID_FORMAT = "pi-workstream/id/v1";
 
@@ -138,11 +138,11 @@ export async function loadPlan(path: string): Promise<Plan> {
 	return parsePlan(await readFile(absolute, "utf8"), absolute);
 }
 
-export async function findPlan(planId: string): Promise<Plan> {
+export async function findPlan(planId: string, root: string): Promise<Plan> {
 	const matches: Plan[] = [];
-	for await (const relativePath of glob("**/*.md", { cwd: PLAN_ROOT })) {
+	for await (const relativePath of glob("**/*.md", { cwd: root })) {
 		try {
-			const plan = await loadPlan(resolve(PLAN_ROOT, relativePath));
+			const plan = await loadPlan(resolve(root, relativePath));
 			if (plan.id === planId) matches.push(plan);
 		} catch {}
 	}
@@ -150,9 +150,9 @@ export async function findPlan(planId: string): Promise<Plan> {
 	return matches[0];
 }
 
-export async function savePlan(markdown: string): Promise<Plan> {
+export async function savePlan(markdown: string, root: string): Promise<Plan> {
 	const incoming = parsePlan(markdown);
-	const target = join(PLAN_ROOT, incoming.filename);
+	const target = join(root, incoming.filename);
 	let existing: Plan | undefined;
 	try {
 		existing = await loadPlan(target);
@@ -162,7 +162,7 @@ export async function savePlan(markdown: string): Promise<Plan> {
 	if (existing && (existing.title !== incoming.title || existing.id !== incoming.id)) {
 		throw new Error("A different plan already uses the canonical plan filename.");
 	}
-	await mkdir(PLAN_ROOT, { recursive: true });
+	await mkdir(root, { recursive: true });
 	await writeFileAtomic(target, markdown, { encoding: "utf8" });
 	return parsePlan(markdown, target);
 }

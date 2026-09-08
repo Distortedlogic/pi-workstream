@@ -13,6 +13,7 @@
 		"node": ">=22.19.0"
 	},
 	"scripts": {
+		"test": "vitest run",
 		"check": "npm run typecheck && npm run lint",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
@@ -34,11 +35,13 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
+		"@earendil-works/pi-ai": "0.84.3",
 		"@earendil-works/pi-coding-agent": "0.84.3",
 		"@types/mdast": "^4.0.4",
 		"@types/node": "^22.10.0",
 		"@types/write-file-atomic": "^4.0.3",
-		"typescript": "^5.7.0"
+		"typescript": "^5.7.0",
+		"vitest": "4.1.9"
 	},
 	"files": ["src"],
 	"pi": {
