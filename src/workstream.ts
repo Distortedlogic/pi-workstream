@@ -6,9 +6,11 @@ import { Value } from "typebox/value";
 import {
 	type Batch,
 	type BatchSnapshot,
+	BatchSnapshotSchema,
 	ERR_PLAN_BINDING,
 	PLAN_ROOT,
 	type Plan,
+	Sha256Schema,
 	batchById,
 	checkTask,
 	findPlan,
@@ -31,42 +33,27 @@ import {
 } from "./session.ts";
 import { render, reviewSummary, status } from "./ui.ts";
 
+const VERSION = 1;
 const exact = { additionalProperties: false } as const;
-const hash = Type.String({ pattern: "^[a-f0-9]{64}$" });
-const batch = Type.Object(
-	{
-		planId: hash,
-		batchId: hash,
-		structuralRevision: hash,
-		fileRevision: hash,
-		bitmap: Type.Array(Type.Boolean()),
-	},
-	exact,
-);
+const failureCode = Type.Union([
+	Type.Literal("batch_changed"),
+	Type.Literal("plan_binding_mismatch"),
+	Type.Literal("task_failed"),
+]);
 const active = {
-	v: Type.Literal(1),
+	v: Type.Literal(VERSION),
 	runId: Type.String({ minLength: 1 }),
-	planId: hash,
-	batch,
+	batch: BatchSnapshotSchema,
 	batchStartEntryId: Type.String({ minLength: 1 }),
 };
 
-export const WorkstreamStateSchema = Type.Union([
-	Type.Object({ v: Type.Literal(1), phase: Type.Literal("idle") }, exact),
+const WorkstreamStateSchema = Type.Union([
+	Type.Object({ v: Type.Literal(VERSION), phase: Type.Literal("idle") }, exact),
 	Type.Object(
 		{
 			...active,
 			phase: Type.Literal("running"),
 			taskIndex: Type.Integer({ minimum: 0 }),
-			pauseAfterTask: Type.Boolean(),
-		},
-		exact,
-	),
-	Type.Object(
-		{
-			...active,
-			phase: Type.Literal("paused"),
-			nextTaskIndex: Type.Integer({ minimum: 0 }),
 		},
 		exact,
 	),
@@ -79,12 +66,15 @@ export const WorkstreamStateSchema = Type.Union([
 		},
 		exact,
 	),
-	Type.Object({ v: Type.Literal(1), phase: Type.Literal("failed"), code: Type.String() }, exact),
-	Type.Object({ v: Type.Literal(1), phase: Type.Literal("complete"), runId: Type.String(), planId: hash }, exact),
+	Type.Object({ v: Type.Literal(VERSION), phase: Type.Literal("failed"), code: failureCode }, exact),
+	Type.Object(
+		{ v: Type.Literal(VERSION), phase: Type.Literal("complete"), runId: Type.String(), planId: Sha256Schema },
+		exact,
+	),
 ]);
 
 export type WorkstreamState = Static<typeof WorkstreamStateSchema>;
-const IDLE: WorkstreamState = { v: 1, phase: "idle" };
+const IDLE: WorkstreamState = { v: VERSION, phase: "idle" };
 const ToolSchema = Type.Object({
 	action: Type.Union([Type.Literal("status"), Type.Literal("complete_task"), Type.Literal("fail_task")]),
 });
@@ -138,12 +128,6 @@ class Workstream {
 							if (!value) throw new Error("Usage: /workstream run <plan-path>");
 							await this.start(ctx, value);
 							break;
-						case "pause":
-							this.pause(ctx);
-							break;
-						case "resume":
-							await this.resume(ctx);
-							break;
 						case "review":
 							await this.review(ctx);
 							break;
@@ -154,7 +138,7 @@ class Workstream {
 						case "status":
 							break;
 						default:
-							throw new Error("Usage: /workstream <plan|run|status|pause|resume|review|reset>");
+							throw new Error("Usage: /workstream <plan|run|status|review|reset>");
 					}
 					ctx.ui.notify(status(this.state(ctx), this.#plans.get(sid(ctx))), "info");
 				} catch (error) {
@@ -176,14 +160,17 @@ class Workstream {
 			parameters: ToolSchema,
 			execute: async (_id, params, _signal, _update, ctx) => {
 				if (params.action === "complete_task") await this.completeTask(ctx);
-				if (params.action === "fail_task") this.set(ctx, { v: 1, phase: "failed", code: "task_failed" });
+				if (params.action === "fail_task") {
+					if (this.state(ctx).phase !== "running") throw new Error("There is no active task to fail.");
+					this.set(ctx, { v: VERSION, phase: "failed", code: "task_failed" });
+				}
 				const state = this.state(ctx);
 				return {
 					content: [{ type: "text", text: status(state, this.#plans.get(sid(ctx))) }],
 					details: {
 						phase: state.phase,
-						...("planId" in state ? { planId: state.planId } : {}),
-						...("batch" in state ? { batchId: state.batch.batchId } : {}),
+						...(state.phase === "complete" ? { planId: state.planId } : {}),
+						...("batch" in state ? { planId: state.batch.planId, batchId: state.batch.batchId } : {}),
 					},
 				};
 			},
@@ -196,7 +183,6 @@ class Workstream {
 
 	private set(ctx: ExtensionContext, state: WorkstreamState): void {
 		if (!Value.Check(WorkstreamStateSchema, state)) throw new Error("The workstream state is invalid.");
-		if ("batch" in state && state.batch.planId !== state.planId) throw new Error("The workstream state is invalid.");
 		this.#states.set(sid(ctx), state);
 		this.pi.appendEntry(STATE_ENTRY, structuredClone(state));
 		render(ctx, state, this.#plans.get(sid(ctx)));
@@ -223,16 +209,16 @@ class Workstream {
 	private async hydrate(ctx: ExtensionContext): Promise<void> {
 		const state = this.replay(ctx);
 		this.#states.set(sid(ctx), state);
-		if (state.phase === "running" || state.phase === "paused" || state.phase === "review") {
+		if (state.phase === "running" || state.phase === "review") {
 			try {
-				const plan = await findPlan(state.planId);
+				const plan = await findPlan(state.batch.planId);
 				this.#plans.set(sid(ctx), plan);
 				if (state.phase === "review" && hasCompression(ctx, state.runId, state.batch.batchId)) {
 					await this.advance(ctx, state, plan);
 					return;
 				}
 			} catch {
-				this.set(ctx, { v: 1, phase: "failed", code: "plan_binding_mismatch" });
+				this.set(ctx, { v: VERSION, phase: "failed", code: "plan_binding_mismatch" });
 				return;
 			}
 		}
@@ -248,11 +234,8 @@ class Workstream {
 	}
 
 	private async start(ctx: ExtensionContext, path: string): Promise<void> {
-		if (
-			this.state(ctx).phase !== "idle" &&
-			this.state(ctx).phase !== "failed" &&
-			this.state(ctx).phase !== "complete"
-		) {
+		const state = this.state(ctx);
+		if (state.phase !== "idle" && state.phase !== "failed" && state.phase !== "complete") {
 			throw new Error("A workstream run is already active.");
 		}
 		const plan = await loadPlan(path);
@@ -269,7 +252,7 @@ class Workstream {
 			plan,
 			batch,
 			batchState,
-			batch.bitmap.indexOf(false),
+			batch.tasks.findIndex((task) => !task.checked),
 			appendBatchStart(this.pi, ctx, runId, batchState),
 		);
 	}
@@ -286,43 +269,22 @@ class Workstream {
 		const task = batch.tasks[taskIndex];
 		if (!task || task.checked) throw new Error(ERR_PLAN_BINDING);
 		this.set(ctx, {
-			v: 1,
+			v: VERSION,
 			phase: "running",
 			runId,
-			planId: plan.id,
 			batch: batchState,
 			batchStartEntryId,
 			taskIndex,
-			pauseAfterTask: false,
 		});
-		const prompt = `[Workstream ${batch.index + 1}: ${batch.title}]\n[Task ${task.index + 1}/${batch.tasks.length}]\n\n${task.text}`;
+		const prompt = `[Workstream ${plan.batches.indexOf(batch) + 1}: ${batch.title}]\n[Task ${taskIndex + 1}/${batch.tasks.length}]\n\n${task.text}`;
 		if (ctx.isIdle()) this.pi.sendUserMessage(prompt);
 		else this.pi.sendUserMessage(prompt, { deliverAs: "followUp" });
-	}
-
-	private pause(ctx: ExtensionContext): void {
-		const state = this.state(ctx);
-		if (state.phase !== "running") throw new Error("There is no active task to pause after.");
-		this.set(ctx, { ...state, pauseAfterTask: true });
-	}
-
-	private async resume(ctx: ExtensionContext): Promise<void> {
-		const state = this.state(ctx);
-		if (state.phase === "running" && state.pauseAfterTask) {
-			this.set(ctx, { ...state, pauseAfterTask: false });
-			return;
-		}
-		if (state.phase !== "paused") throw new Error("The workstream is not paused.");
-		const plan = await this.plan(ctx, state.planId);
-		const batch = batchById(plan, state.batch.batchId);
-		if (!batch) throw new Error(ERR_PLAN_BINDING);
-		this.deliver(ctx, state.runId, plan, batch, state.batch, state.nextTaskIndex, state.batchStartEntryId);
 	}
 
 	private async completeTask(ctx: ExtensionContext): Promise<void> {
 		const state = this.state(ctx);
 		if (state.phase !== "running") throw new Error("There is no active task to complete.");
-		const plan = await this.plan(ctx, state.planId);
+		const plan = await this.plan(ctx, state.batch.planId);
 		const freshPlan = await checkTask(plan, state.batch.batchId, state.taskIndex);
 		const freshBatch = batchById(freshPlan, state.batch.batchId);
 		if (!freshBatch) throw new Error(ERR_PLAN_BINDING);
@@ -333,32 +295,19 @@ class Workstream {
 			state.batch.structuralRevision !== freshState.structuralRevision ||
 			!taskCompletionIsExact(state.batch.bitmap, freshState.bitmap, state.taskIndex)
 		) {
-			this.set(ctx, { v: 1, phase: "failed", code: "batch_changed" });
+			this.set(ctx, { v: VERSION, phase: "failed", code: "batch_changed" });
 			return;
 		}
 		this.#plans.set(sid(ctx), freshPlan);
-		const nextTaskIndex = freshBatch.bitmap.indexOf(false);
-		if (nextTaskIndex !== -1 && state.pauseAfterTask) {
-			this.set(ctx, {
-				v: 1,
-				phase: "paused",
-				runId: state.runId,
-				planId: state.planId,
-				batch: freshState,
-				batchStartEntryId: state.batchStartEntryId,
-				nextTaskIndex,
-			});
-			return;
-		}
+		const nextTaskIndex = freshBatch.tasks.findIndex((task) => !task.checked);
 		if (nextTaskIndex !== -1) {
 			this.deliver(ctx, state.runId, freshPlan, freshBatch, freshState, nextTaskIndex, state.batchStartEntryId);
 			return;
 		}
 		this.set(ctx, {
-			v: 1,
+			v: VERSION,
 			phase: "review",
 			runId: state.runId,
-			planId: state.planId,
 			batch: freshState,
 			batchStartEntryId: state.batchStartEntryId,
 			completedTaskIndex: state.taskIndex,
@@ -369,10 +318,10 @@ class Workstream {
 	private async review(ctx: ExtensionCommandContext): Promise<void> {
 		const state = this.state(ctx);
 		if (state.phase !== "review") throw new Error("No completed batch is waiting for review.");
-		const compression = prepareCompression(ctx, state.batchStartEntryId);
-		const summary = await reviewSummary(ctx, compressionSource(ctx, compression));
+		const [compression, source] = prepareCompression(ctx, state.batchStartEntryId);
+		const summary = await reviewSummary(ctx, source);
 		if (!summary) return;
-		const plan = await findPlan(state.planId);
+		const plan = await findPlan(state.batch.planId);
 		const batch = batchById(plan, state.batch.batchId);
 		if (!batch) throw new Error(ERR_PLAN_BINDING);
 		const freshState = snapshot(plan, batch);
@@ -396,12 +345,20 @@ class Workstream {
 	): Promise<void> {
 		const next = nextIncompleteBatch(plan, state.batch.batchId);
 		if (!next) {
-			this.set(ctx, { v: 1, phase: "complete", runId: state.runId, planId: state.planId });
+			this.set(ctx, { v: VERSION, phase: "complete", runId: state.runId, planId: state.batch.planId });
 			return;
 		}
 		const nextState = snapshot(plan, next);
 		const marker = appendBatchStart(this.pi, ctx, state.runId, nextState);
-		this.deliver(ctx, state.runId, plan, next, nextState, next.bitmap.indexOf(false), marker);
+		this.deliver(
+			ctx,
+			state.runId,
+			plan,
+			next,
+			nextState,
+			next.tasks.findIndex((task) => !task.checked),
+			marker,
+		);
 	}
 }
 

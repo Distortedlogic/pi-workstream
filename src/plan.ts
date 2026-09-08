@@ -1,11 +1,12 @@
 import { hash as nodeHash } from "node:crypto";
 import { glob, mkdir, readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import slugify from "@sindresorhus/slugify";
 import type { Heading, ListItem, Paragraph, Root } from "mdast";
 import { toString as mdastText } from "mdast-util-to-string";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
+import { type Static, Type } from "typebox";
 import { unified } from "unified";
 import { visit } from "unist-util-visit";
 import writeFileAtomic from "write-file-atomic";
@@ -15,7 +16,6 @@ export const ERR_PLAN_BINDING = "The bound plan is missing, duplicated, or diffe
 const ID_FORMAT = "pi-workstream/id/v1";
 
 export interface Task {
-	index: number;
 	text: string;
 	checked: boolean;
 	checkboxOffset: number;
@@ -23,10 +23,8 @@ export interface Task {
 
 export interface Batch {
 	id: string;
-	index: number;
 	title: string;
 	tasks: Task[];
-	bitmap: boolean[];
 }
 
 export interface Plan {
@@ -40,13 +38,18 @@ export interface Plan {
 	batches: Batch[];
 }
 
-export interface BatchSnapshot {
-	planId: string;
-	batchId: string;
-	structuralRevision: string;
-	fileRevision: string;
-	bitmap: boolean[];
-}
+export const Sha256Schema = Type.String({ pattern: "^[a-f0-9]{64}$" });
+export const BatchSnapshotSchema = Type.Object(
+	{
+		planId: Sha256Schema,
+		batchId: Sha256Schema,
+		structuralRevision: Sha256Schema,
+		fileRevision: Sha256Schema,
+		bitmap: Type.Array(Type.Boolean()),
+	},
+	{ additionalProperties: false },
+);
+export type BatchSnapshot = Static<typeof BatchSnapshotSchema>;
 
 export const hash = (value: string): string => nodeHash("sha256", value, "hex");
 
@@ -85,18 +88,18 @@ export function parsePlan(markdown: string, path = ""): Plan {
 			const heading = node as Heading;
 			if (heading.depth === 1) headings.push(heading);
 			if (heading.depth === 2) {
-				current = { id: "", index: batches.length, title: mdastText(heading).trim(), tasks: [], bitmap: [] };
+				current = { id: "", title: mdastText(heading).trim(), tasks: [] };
 				batches.push(current);
 			}
 			return;
 		}
-		if (node.type !== "listItem" || typeof (node as ListItem).checked !== "boolean") return;
-		if (!current) throw new Error("Plan task checkboxes must be inside a level-two batch.");
+		if (node.type !== "listItem") return;
 		const item = node as ListItem;
+		if (typeof item.checked !== "boolean") return;
+		if (!current) throw new Error("Plan task checkboxes must be inside a level-two batch.");
 		current.tasks.push({
-			index: current.tasks.length,
 			text: taskText(item),
-			checked: item.checked as boolean,
+			checked: item.checked,
 			checkboxOffset: checkboxOffset(markdown, item),
 		});
 	});
@@ -105,14 +108,13 @@ export function parsePlan(markdown: string, path = ""): Plan {
 	if (batches.length === 0) throw new Error("The plan must contain at least one level-two batch.");
 	const title = mdastText(headings[0]).trim();
 	const canonicalFilename = filename(title);
-	const planId = id("plan", canonicalFilename.toLowerCase());
+	const planId = id("plan", canonicalFilename);
 	const seen = new Set<string>();
 	for (const batch of batches) {
 		const canonicalTitle = batch.title.normalize("NFC");
 		if (seen.has(canonicalTitle)) throw new Error("Plan batch headings must be unique.");
 		seen.add(canonicalTitle);
 		batch.id = id("batch", `${planId}\u0000${canonicalTitle}`);
-		batch.bitmap = batch.tasks.map((task) => task.checked);
 	}
 	const structure = batches.map((batch) => ({
 		id: batch.id,
@@ -160,7 +162,7 @@ export async function savePlan(markdown: string): Promise<Plan> {
 	if (existing && (existing.title !== incoming.title || existing.id !== incoming.id)) {
 		throw new Error("A different plan already uses the canonical plan filename.");
 	}
-	await mkdir(dirname(target), { recursive: true });
+	await mkdir(PLAN_ROOT, { recursive: true });
 	await writeFileAtomic(target, markdown, { encoding: "utf8" });
 	return parsePlan(markdown, target);
 }
@@ -178,11 +180,13 @@ export const batchById = (plan: Plan, batchId: string): Batch | undefined =>
 	plan.batches.find((batch) => batch.id === batchId);
 
 export const firstIncompleteBatch = (plan: Plan): Batch | undefined =>
-	plan.batches.find((batch) => batch.bitmap.includes(false));
+	plan.batches.find((batch) => batch.tasks.some((task) => !task.checked));
 
 export function nextIncompleteBatch(plan: Plan, batchId: string): Batch | undefined {
-	const current = batchById(plan, batchId);
-	return current ? plan.batches.slice(current.index + 1).find((batch) => batch.bitmap.includes(false)) : undefined;
+	const current = plan.batches.findIndex((batch) => batch.id === batchId);
+	return current === -1
+		? undefined
+		: plan.batches.slice(current + 1).find((batch) => batch.tasks.some((task) => !task.checked));
 }
 
 export function snapshot(plan: Plan, batch: Batch): BatchSnapshot {
@@ -191,7 +195,7 @@ export function snapshot(plan: Plan, batch: Batch): BatchSnapshot {
 		batchId: batch.id,
 		structuralRevision: plan.structuralRevision,
 		fileRevision: plan.fileRevision,
-		bitmap: [...batch.bitmap],
+		bitmap: batch.tasks.map((task) => task.checked),
 	};
 }
 

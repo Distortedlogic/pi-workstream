@@ -16,12 +16,7 @@ export function status(state: WorkstreamState, plan?: Plan): string {
 	if (state.phase === "failed") return `Workstream: failed · ${state.code}`;
 	const batch = plan?.batches.find((item) => item.id === state.batch.batchId);
 	const progress = `${state.batch.bitmap.filter(Boolean).length}/${state.batch.bitmap.length}`;
-	const task =
-		state.phase === "running"
-			? ` · task ${state.taskIndex + 1}`
-			: state.phase === "paused"
-				? ` · next task ${state.nextTaskIndex + 1}`
-				: "";
+	const task = state.phase === "running" ? ` · task ${state.taskIndex + 1}` : "";
 	return `Workstream: ${state.phase} · ${batch?.title ?? state.batch.batchId.slice(0, 8)} · ${progress}${task}`;
 }
 

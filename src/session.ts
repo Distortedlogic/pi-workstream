@@ -8,11 +8,11 @@ const BATCH_START_ENTRY = "pi-workstream/batch-start";
 const COMPRESSION_ENTRY = "pi-workstream/compression";
 const COMPRESSION_TAIL = "pi-workstream/compressed-tail";
 
-export interface Compression {
+interface Compression {
 	operationId: string;
 	sourceLeafId: string;
-	entryIds: string[];
-	sourceHash: string;
+	selectedEntryIds: string[];
+	sourceSha256: string;
 }
 
 function branch(ctx: ExtensionContext): SessionEntry[] {
@@ -26,7 +26,7 @@ export function appendBatchStart(pi: ExtensionAPI, ctx: ExtensionContext, runId:
 	return id;
 }
 
-export function prepareCompression(ctx: ExtensionContext, batchStartEntryId: string): Compression {
+export function prepareCompression(ctx: ExtensionContext, batchStartEntryId: string): [Compression, string] {
 	const entries = branch(ctx);
 	const start = entries.findIndex((entry) => entry.id === batchStartEntryId);
 	const sourceLeafId = ctx.sessionManager.getLeafId();
@@ -34,20 +34,25 @@ export function prepareCompression(ctx: ExtensionContext, batchStartEntryId: str
 	const selected = entries.slice(start + 1);
 	const source = serializeEntries(selected);
 	if (!source.trim()) throw new Error("The completed batch has no session range.");
-	return {
-		operationId: randomUUID(),
-		sourceLeafId,
-		entryIds: selected.map((entry) => entry.id),
-		sourceHash: hash(source),
-	};
+	return [
+		{
+			operationId: randomUUID(),
+			sourceLeafId,
+			selectedEntryIds: selected.map((entry) => entry.id),
+			sourceSha256: hash(source),
+		},
+		source,
+	];
 }
 
 export function compressionSource(ctx: ExtensionContext, compression: Compression): string {
-	const ids = new Set(compression.entryIds);
+	const ids = new Set(compression.selectedEntryIds);
 	const entries = branch(ctx).filter((entry) => ids.has(entry.id));
-	if (entries.length !== compression.entryIds.length) throw new Error("The compression source is no longer available.");
+	if (entries.length !== compression.selectedEntryIds.length) {
+		throw new Error("The compression source is no longer available.");
+	}
 	const source = serializeEntries(entries);
-	if (hash(source) !== compression.sourceHash) throw new Error("The compression source changed.");
+	if (hash(source) !== compression.sourceSha256) throw new Error("The compression source changed.");
 	return source;
 }
 
@@ -86,10 +91,7 @@ export function appendCompression(
 		runId,
 		planId: batch.planId,
 		batchId: batch.batchId,
-		operationId: compression.operationId,
-		sourceLeafId: compression.sourceLeafId,
-		selectedEntryIds: compression.entryIds,
-		sourceSha256: compression.sourceHash,
+		...compression,
 	};
 	pi.sendMessage(
 		{ customType: COMPRESSION_TAIL, content: summary.trim(), display: true, details },
