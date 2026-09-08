@@ -83,9 +83,7 @@ describe("workstream plans", () => {
 		const plan = await savePlan("# Exact Write\n\n## Batch\n\n- [ ] first\n- [ ] second\n", directory);
 		const updated = await checkTask(plan, plan.batches[0].id, 1);
 
-		expect(await readFile(plan.path, "utf8")).toBe(
-			"# Exact Write\n\n## Batch\n\n- [ ] first\n- [x] second\n",
-		);
+		expect(await readFile(plan.path, "utf8")).toBe("# Exact Write\n\n## Batch\n\n- [ ] first\n- [x] second\n");
 		expect(snapshot(updated, updated.batches[0]).bitmap).toEqual([false, true]);
 	});
 });

@@ -102,8 +102,8 @@ class Workstream {
 	}
 
 	register(): void {
-		this.pi.on("session_start", async (_event, ctx) => this.hydrate(ctx));
-		this.pi.on("session_tree", async (_event, ctx) => this.hydrate(ctx));
+		this.pi.on("session_start", async (_event, ctx) => this.hydrate(ctx, true));
+		this.pi.on("session_tree", async (_event, ctx) => this.hydrate(ctx, false));
 		this.pi.on("session_shutdown", async (_event, ctx) => {
 			this.#states.delete(sid(ctx));
 			this.#plans.delete(sid(ctx));
@@ -208,14 +208,14 @@ class Workstream {
 		return state;
 	}
 
-	private async hydrate(ctx: ExtensionContext): Promise<void> {
+	private async hydrate(ctx: ExtensionContext, recoverCompression: boolean): Promise<void> {
 		const state = this.replay(ctx);
 		this.#states.set(sid(ctx), state);
 		if (state.phase === "running" || state.phase === "review") {
 			try {
 				const plan = await findPlan(state.batch.planId, planRoot(ctx.cwd));
 				this.#plans.set(sid(ctx), plan);
-				if (state.phase === "review" && hasCompression(ctx, state.runId, state.batch.batchId)) {
+				if (recoverCompression && state.phase === "review" && hasCompression(ctx, state.runId, state.batch.batchId)) {
 					await this.advance(ctx, state, plan);
 					return;
 				}

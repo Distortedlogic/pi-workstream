@@ -13,7 +13,8 @@
 		"node": ">=22.19.0"
 	},
 	"scripts": {
-		"test": "vitest run",
+		"test": "vitest run test/plan.test.ts test/workstream.integration.test.ts",
+		"test:e2e": "vitest run test/workstream.e2e.test.ts --testTimeout=180000",
 		"check": "npm run typecheck && npm run lint",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
@@ -40,8 +41,9 @@
 		"@types/mdast": "^4.0.4",
 		"@types/node": "^22.10.0",
 		"@types/write-file-atomic": "^4.0.3",
+		"p-wait-for": "6.0.0",
 		"typescript": "^5.7.0",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	},
 	"files": ["src"],
 	"pi": {
