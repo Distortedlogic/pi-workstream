@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
@@ -258,6 +258,57 @@ describe("pi-workstream on the real Pi runtime", () => {
 		expect(customEntries(harness, "pi-workstream/compression")).toHaveLength(0);
 		expect(lastState(harness).phase).toBe("review");
 		expect(harness.notifications.at(-1)).toMatchObject({ type: "error" });
+	});
+
+	it("rejects new session content after summary approval without applying compression", async () => {
+		// biome-ignore lint/style/useConst: the editor callback needs the harness after createHarness returns.
+		let harness: Harness;
+		harness = await createHarness("# Changed Session\n\n## Batch\n\n- [ ] task\n", async (_title, prefill) => {
+			await harness.runtime.session.prompt("intervening session content");
+			await harness.runtime.session.waitForIdle();
+			return prefill;
+		});
+		harness.faux.setResponses([
+			COMPLETE_TASK(),
+			fauxAssistantMessage("task settled"),
+			fauxAssistantMessage("summary"),
+			fauxAssistantMessage("intervening response"),
+		]);
+
+		await command(harness, `run ${harness.plan.path}`);
+		await waitForPhase(harness, "review");
+		await command(harness, "review");
+
+		expect(customEntries(harness, "pi-workstream/compression")).toHaveLength(0);
+		expect(lastState(harness).phase).toBe("review");
+		expect(harness.notifications.at(-1)).toMatchObject({ type: "error" });
+	});
+
+	it("rejects missing active and duplicate completed plan bindings after restart", async () => {
+		const active = await createHarness("# Missing Active\n\n## Batch\n\n- [ ] task\n");
+		active.faux.setResponses([fauxAssistantMessage("leave task active")]);
+		await command(active, `run ${active.plan.path}`);
+		await pWaitFor(() => workstreamPrompts(active).length === 1, { timeout: 3000 });
+		await active.runtime.session.waitForIdle();
+		await rm(active.plan.path);
+		await restart(active);
+		expect(lastState(active)).toMatchObject({ phase: "failed", code: "plan_binding_mismatch" });
+
+		const completed = await createHarness("# Duplicate Complete\n\n## Batch\n\n- [ ] task\n");
+		completed.faux.setResponses([
+			COMPLETE_TASK(),
+			fauxAssistantMessage("task settled"),
+			fauxAssistantMessage("summary"),
+		]);
+		await command(completed, `run ${completed.plan.path}`);
+		await waitForPhase(completed, "review");
+		await command(completed, "review");
+		expect(lastState(completed).phase).toBe("complete");
+		const duplicateDir = join(completed.tempDir, ".pi", "plans", "duplicate");
+		await mkdir(duplicateDir, { recursive: true });
+		await writeFile(join(duplicateDir, "duplicate-complete.md"), await readFile(completed.plan.path, "utf8"), "utf8");
+		await restart(completed);
+		expect(lastState(completed)).toMatchObject({ phase: "failed", code: "plan_binding_mismatch" });
 	});
 
 	it("restores review from a file-backed session and completes it after process recreation", async () => {

@@ -211,9 +211,10 @@ class Workstream {
 	private async hydrate(ctx: ExtensionContext, recoverCompression: boolean): Promise<void> {
 		const state = this.replay(ctx);
 		this.#states.set(sid(ctx), state);
-		if (state.phase === "running" || state.phase === "review") {
+		if (state.phase === "running" || state.phase === "review" || state.phase === "complete") {
 			try {
-				const plan = await findPlan(state.batch.planId, planRoot(ctx.cwd));
+				const planId = state.phase === "complete" ? state.planId : state.batch.planId;
+				const plan = await findPlan(planId, planRoot(ctx.cwd));
 				this.#plans.set(sid(ctx), plan);
 				if (recoverCompression && state.phase === "review" && hasCompression(ctx, state.runId, state.batch.batchId)) {
 					await this.advance(ctx, state, plan);
