@@ -2,34 +2,40 @@ import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/
 import type { Plan } from "./plan.ts";
 import type { WorkstreamState } from "./workstream.ts";
 
-const WIDGET = "pi-workstream";
+const WIDGET = "pi-workstream-plan";
 const SUMMARY_PROMPT = [
-	"Summarize one completed workstream batch.",
+	"Summarize the completed execution of one task-plan batch.",
 	"Return summary text only.",
-	"Preserve requirements, decisions, paths, commands, errors, side effects, validation state, and unfinished work.",
+	"Preserve files changed, implementation decisions, exact commands and test results, failures, unresolved work, and commit hashes.",
 	"Do not invent results or remove uncertainty.",
 ].join("\n");
 
-export function status(state: WorkstreamState, plan?: Plan): string {
-	if (state.phase === "idle") return "Workstream: idle";
-	if (state.phase === "complete") return `Workstream: complete · plan ${state.planId.slice(0, 8)}`;
-	if (state.phase === "failed") return `Workstream: failed · ${state.code}`;
-	const batch = plan?.batches.find((item) => item.id === state.batch.batchId);
-	const progress = `${state.batch.bitmap.filter(Boolean).length}/${state.batch.bitmap.length}`;
-	const task = state.phase === "running" ? ` · task ${state.taskIndex + 1}` : "";
-	return `Workstream: ${state.phase} · ${batch?.title ?? state.batch.batchId.slice(0, 8)} · ${progress}${task}`;
+export function status(state: WorkstreamState): string {
+	if (state.phase === "idle") return "Queue plan: idle";
+	if (state.phase === "complete") return `Queue plan: complete · ${state.planId.slice(0, 8)}`;
+	if (state.phase === "paused") return `Queue plan: paused · ${state.code}`;
+	return `Queue plan: ${state.phase} · batch ${state.batchOrdinal + 1}`;
+}
+
+function planLines(plan: Plan, state: WorkstreamState): string[] {
+	const activeBatchId = "batchId" in state ? state.batchId : undefined;
+	const lines = [`Tasks · ${plan.title}`];
+	for (const batch of plan.batches) {
+		const active = batch.id === activeBatchId ? "▶" : batch.tasks.every((task) => task.checked) ? "✓" : "○";
+		lines.push(`${active} ${batch.title}`);
+		for (const task of batch.tasks) lines.push(`  ${task.checked ? "[x]" : "[ ]"} ${task.text}`);
+	}
+	return lines;
 }
 
 export function render(ctx: ExtensionContext, state: WorkstreamState, plan?: Plan): void {
 	if (!ctx.hasUI) return;
-	if (state.phase === "idle") {
-		ctx.ui.setWidget(WIDGET, undefined);
-		ctx.ui.setStatus(WIDGET, undefined);
-		return;
-	}
-	const line = status(state, plan);
-	ctx.ui.setWidget(WIDGET, [line], { placement: "aboveEditor" });
-	ctx.ui.setStatus(WIDGET, line);
+	ctx.ui.setStatus(WIDGET, state.phase === "idle" ? undefined : status(state));
+	ctx.ui.setWidget(WIDGET, plan ? planLines(plan, state) : undefined, { placement: "aboveEditor" });
+}
+
+export function showPlan(ctx: ExtensionContext, plan: Plan): void {
+	ctx.ui.notify(plan.markdown, "info");
 }
 
 export async function reviewSummary(ctx: ExtensionCommandContext, source: string): Promise<string | undefined> {

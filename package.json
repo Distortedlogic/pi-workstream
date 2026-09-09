@@ -1,8 +1,9 @@
 {
 	"name": "pi-workstream",
 	"version": "0.3.0",
-	"description": "A single native Pi workstream engine for plan execution and context compression.",
+	"description": "A native Pi pipeline for disk-backed plans, isolated batch execution, and reviewed compression.",
 	"private": true,
+	"license": "MIT",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/Distortedlogic/pi-workstream.git"
@@ -21,18 +22,16 @@
 		"format": "biome check --write ."
 	},
 	"dependencies": {
-		"@pi-context-tree/core": "0.1.1",
-		"@sindresorhus/slugify": "^2.2.1",
-		"mdast-util-to-string": "^4.0.0",
-		"remark-gfm": "^4.0.1",
-		"remark-parse": "^11.0.0",
+		"@pi-context-tree/core": "0.3.1",
+		"mdast-util-to-string": "4.0.0",
+		"remark": "15.0.1",
+		"remark-gfm": "4.0.1",
 		"typebox": "1.3.7",
-		"unified": "^11.0.5",
-		"unist-util-visit": "^5.0.0",
-		"write-file-atomic": "^6.0.0"
+		"unist-util-visit": "5.0.0",
+		"write-file-atomic": "8.0.0"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "*"
+		"@earendil-works/pi-coding-agent": "0.84.3"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
