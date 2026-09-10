@@ -11,10 +11,11 @@ const SUMMARY_PROMPT = [
 ].join("\n");
 
 export function status(state: WorkstreamState): string {
-	if (state.phase === "idle") return "Queue plan: idle";
-	if (state.phase === "complete") return `Queue plan: complete · ${state.planId.slice(0, 8)}`;
-	if (state.phase === "paused") return `Queue plan: paused · ${state.code}`;
-	return `Queue plan: ${state.phase} · batch ${state.batchOrdinal + 1}`;
+	if (state.phase === "idle") return "Workstream: idle";
+	if (state.phase === "planning") return state.planId ? "Workstream: planning · plan bound" : "Workstream: planning";
+	if (state.phase === "complete") return `Workstream: complete · ${state.planId.slice(0, 8)}`;
+	if (state.phase === "paused") return `Workstream: paused · ${state.code}`;
+	return `Workstream: ${state.phase} · batch ${state.batchOrdinal + 1}`;
 }
 
 function planLines(plan: Plan, state: WorkstreamState): string[] {

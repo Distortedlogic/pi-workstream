@@ -1,11 +1,14 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	type AgentSession,
 	type AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	type ExtensionUIContext,
+	RpcClient,
+	type RpcExtensionUIRequest,
 	SessionManager,
 	createAgentSessionFromServices,
 	createAgentSessionRuntime,
@@ -41,15 +44,7 @@ function lastState(): Record<string, unknown> {
 	return data && typeof data === "object" ? (data as Record<string, unknown>) : { phase: "idle" };
 }
 
-async function runQueue(): Promise<void> {
-	if (!runtime) throw new Error("Pi runtime was not created");
-	const runner = runtime.session.extensionRunner;
-	const command = runner.getCommand("queue");
-	if (!command) throw new Error("queue command was not registered");
-	await command.handler("run", runner.createCommandContext());
-}
-
-it("creates a plan and completes isolated batches with the real configured model", async () => {
+it("plans and refines after a context checkpoint, then executes in a native fork with the real model", async () => {
 	tempDir = await mkdtemp(join(tmpdir(), "pi-workstream-real-"));
 	const agentDir = getAgentDir();
 	const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
@@ -71,7 +66,7 @@ it("creates a plan and completes isolated batches with the real configured model
 				sessionManager,
 				sessionStartEvent,
 				thinkingLevel: "off",
-				tools: ["read", "write"],
+				tools: ["read", "write", "edit"],
 			})),
 			services,
 			diagnostics: services.diagnostics,
@@ -86,11 +81,13 @@ it("creates a plan and completes isolated batches with the real configured model
 
 	const notifications: Array<{ message: string; type: string | undefined }> = [];
 	const editorDrafts: string[] = [];
+	const reviewContexts: string[] = [];
 	const bind = async (session: AgentSession): Promise<void> => {
 		const runner = session.extensionRunner;
 		const uiContext: ExtensionUIContext = {
 			...runner.getUIContext(),
 			async editor(_title, prefill) {
+				reviewContexts.push(JSON.stringify(runtimeHost.session.messages));
 				editorDrafts.push(prefill ?? "");
 				return prefill;
 			},
@@ -121,6 +118,15 @@ it("creates a plan and completes isolated batches with the real configured model
 	};
 	runtimeHost.setRebindSession(bind);
 	await bind(runtimeHost.session);
+	await writeFile(join(tempDir, "source-context.txt"), "PRELOAD_CONTEXT_SENTINEL: Preserve unrelated files.\n", "utf8");
+	await runtimeHost.session.prompt(
+		"Use read to read source-context.txt, report its rule, then stop. Do not plan or write files yet.",
+	);
+	await runtimeHost.session.waitForIdle();
+	const preload = runtimeHost.session.sessionManager.getBranch();
+	const anchorEntryId = runtimeHost.session.sessionManager.getLeafId();
+	await runtimeHost.session.prompt("/workstream plan");
+	expect(lastState()).toMatchObject({ phase: "planning", anchorEntryId });
 
 	const markdown = [
 		"# Real E2E",
@@ -146,12 +152,17 @@ it("creates a plan and completes isolated batches with the real configured model
 	);
 	await runtimeHost.session.waitForIdle();
 	const plan = await incompletePlan(planRoot(tempDir));
+	await runtimeHost.session.prompt(
+		`Use edit once on ${plan.path}. Replace exactly "Work only on the supplied current batch." with "Work only on the supplied current batch. Preserve unrelated files." Keep all other text unchanged, then stop.`,
+	);
+	await runtimeHost.session.waitForIdle();
+	expect(await readFile(plan.path, "utf8")).toContain("Preserve unrelated files.");
+	expect(lastState()).toMatchObject({ phase: "planning", anchorEntryId, planId: plan.id });
 	const planningSessionFile = runtimeHost.session.sessionFile;
 	if (!planningSessionFile) throw new Error("The planning session was not persisted");
-	const replacement = await runtimeHost.newSession();
-	if (replacement.cancelled) throw new Error("Pi cancelled the clean execution session");
+	const sourceBytes = await readFile(planningSessionFile, "utf8");
 
-	await runQueue();
+	await runtimeHost.session.prompt("/workstream run");
 	await pWaitFor(() => lastState().phase === "complete", { timeout: 180000 });
 	await runtimeHost.session.waitForIdle();
 
@@ -163,6 +174,12 @@ it("creates a plan and completes isolated batches with the real configured model
 		.filter((content) => content.startsWith("[Queued task]\n\n"));
 	expect(plan.path).toBe(join(tempDir, ".pi", "tasks", "Real_E2E.md"));
 	expect(runtimeHost.session.sessionFile).not.toBe(planningSessionFile);
+	expect(await readFile(planningSessionFile, "utf8")).toBe(sourceBytes);
+	expect(runtimeHost.session.sessionManager.getEntries().slice(0, preload.length)).toEqual(preload);
+	expect(reviewContexts[0]).toContain("PRELOAD_CONTEXT_SENTINEL");
+	expect(reviewContexts[0]).not.toContain("verified.txt");
+	expect(reviewContexts[0]).not.toContain("Markdown task plan below");
+	expect(reviewContexts[0]).not.toContain("Use edit once on");
 	expect(queuedPrompts).toHaveLength(2);
 	expect(queuedPrompts[0]).toContain("## Create");
 	expect(queuedPrompts[0]).not.toContain("## Verify");
@@ -179,4 +196,72 @@ it("creates a plan and completes isolated batches with the real configured model
 	expect(editorDrafts).toHaveLength(2);
 	expect(editorDrafts.every((draft) => draft.length > 0)).toBe(true);
 	expect(notifications.filter((item) => item.type === "error")).toEqual([]);
+}, 240000);
+
+it("forks through the real CLI and RPC command path and opens automatic review", async () => {
+	tempDir = await mkdtemp(join(tmpdir(), "pi-workstream-rpc-"));
+	await writeFile(join(tempDir, "context.txt"), "RPC_CONTEXT_SENTINEL\n", "utf8");
+	const client = new RpcClient({
+		cwd: tempDir,
+		cliPath: fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/cli.js", import.meta.url)),
+		args: [
+			"--no-extensions",
+			"--no-skills",
+			"--no-prompt-templates",
+			"--no-context-files",
+			"--session-dir",
+			join(tempDir, "sessions"),
+			"-e",
+			fileURLToPath(new URL("../src/workstream.ts", import.meta.url)),
+			"--tools",
+			"read,write",
+		],
+	});
+	let review: Extract<RpcExtensionUIRequest, { method: "editor" }> | undefined;
+	const unsubscribe = client.onEvent((event) => {
+		const request = event as unknown as RpcExtensionUIRequest;
+		if (request.type === "extension_ui_request" && request.method === "editor") review = request;
+	});
+	try {
+		await client.start();
+		await client.promptAndWait(
+			"Read context.txt with read, report its text, then stop before planning.",
+			undefined,
+			90000,
+		);
+		const preload = await client.getEntries();
+		const source = await client.getState();
+		await client.prompt("/workstream plan");
+		await client.promptAndWait(
+			[
+				"Use write once to save this exact technical task plan to any path, then stop:",
+				"# RPC Fork Plan",
+				"",
+				"## Execute",
+				"",
+				"- [ ] Use write to create rpc-result.txt containing exactly DONE followed by a newline, then stop.",
+			].join("\n"),
+			undefined,
+			90000,
+		);
+		if (!source.sessionFile) throw new Error("The source RPC session has no file");
+		const sourceBytes = await readFile(source.sessionFile, "utf8");
+		await client.prompt("/workstream run");
+		await pWaitFor(() => Boolean(review), { timeout: 120000 });
+		const destination = await client.getState();
+		const { entries } = await client.getEntries();
+		const latest = entries
+			.filter((entry) => entry.type === "custom" && entry.customType === "pi-workstream/state")
+			.at(-1);
+		expect(destination.sessionId).not.toBe(source.sessionId);
+		expect(entries.slice(0, preload.entries.length)).toEqual(preload.entries);
+		expect(await readFile(source.sessionFile, "utf8")).toBe(sourceBytes);
+		expect(latest?.type === "custom" ? latest.data : undefined).toMatchObject({ phase: "compressing" });
+		expect(review?.prefill?.trim()).toBeTruthy();
+		expect(await readFile(join(tempDir, "rpc-result.txt"), "utf8")).toBe("DONE\n");
+		expect(await readFile(join(tempDir, ".pi", "tasks", "RPC_Fork_Plan.md"), "utf8")).toContain("- [ ]");
+	} finally {
+		unsubscribe();
+		await client.stop();
+	}
 }, 240000);
