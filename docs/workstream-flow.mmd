@@ -1,0 +1,63 @@
+---
+title: "pi-workstream: plan, execute, review, repeat"
+---
+flowchart LR
+    accTitle: pi-workstream flow
+    accDescr: Record a planning checkpoint, bind a plan, and fork at the checkpoint. Execute only the current H2 batch. Review its summary, revalidate the plan and session, compress the execution, and complete the batch. Repeat for the next batch.
+
+    %% Source: src/workstream.ts, src/plan.ts, src/session.ts, src/ui.ts.
+    %% Connect whole sections to keep their local top-to-bottom direction.
+
+    subgraph PLAN["1. PLAN AND FORK"]
+        direction TB
+        P0(["Read source context<br/>Then stop before planning"])
+        P1["/workstream plan<br/>Save the settled checkpoint"]:::command
+        P2["PLANNING<br/>Write and refine the canonical plan<br/>First successful write binds planId"]
+        P3["/workstream run<br/>Approve the current batch snapshot<br/>Fork at the checkpoint"]:::command
+        P4["Keep the source session unchanged<br/>The fork keeps source context<br/>but excludes later planning"]:::success
+        PN["Reject invalid writes or approvals<br/>A cancelled fork stays in PLANNING"]:::note
+        PR["Reload / restart:<br/>Restore the bound plan and saved state<br/>Never select another plan as a fallback"]:::note
+
+        P0 --> P1 --> P2 --> P3 --> P4
+        P2 -.- PN
+        P1 -.- PR
+    end
+
+    subgraph EXEC["2. EXECUTE AND REVIEW"]
+        direction TB
+        E0["STARTING<br/>Revalidate approval in the fork<br/>Send nothing if it changed"]
+        E1["RUNNING<br/>Save state and batch-start marker<br/>Send preamble + current H2 only"]
+        E2["Execute the current batch<br/>Block direct plan write / edit"]
+        E3["agent_settled starts COMPRESSING<br/>Save range + bitmap + operation ID<br/>Draft the batch summary"]
+        E4{"Save a non-empty<br/>reviewed summary?"}:::decision
+        EC["Keep the batch unchecked<br/>Steer or /workstream run to retry"]:::failure
+        E5["Summary approved"]:::success
+
+        E0 -->|Valid approval| E1 --> E2 --> E3 --> E4
+        E4 -->|Cancel or empty| EC
+        EC -. Retry .-> E3
+        E4 -->|Save| E5
+    end
+
+    subgraph FINISH["3. VALIDATE AND COMPLETE"]
+        direction TB
+        V0{"Fresh plan snapshot and<br/>session range still match?"}:::decision
+        VF["PAUSED<br/>Do not send a later batch<br/>Resolve the cause; run again"]:::failure
+        V1["Apply compression<br/>Keep exact batch + approved summary<br/>Preserve original session entries"]
+        V2["Atomically check the whole batch<br/>Verify the saved plan"]
+        V3{"Another incomplete<br/>H2 batch remains?"}:::decision
+        VN(["Return to RUNNING<br/>Send only the next H2"]):::success
+        VD(["COMPLETE<br/>Keep planId + runId"]):::success
+        VR["Resume after restart:<br/>Finish an applied compression,<br/>or resume the saved batch<br/>Do not fork or send a batch twice"]:::note
+
+        V0 -->|No| VF
+        V0 -->|Yes| V1 --> V2 --> V3
+        V1 -. Mutation error .-> VF
+        V2 -. Completion error .-> VF
+        V3 -->|Yes| VN
+        V3 -->|No| VD
+        V2 -.- VR
+    end
+
+    PLAN -->|Valid native fork| EXEC
+    EXEC -->|Saved summary| FINISH
