@@ -1,0 +1,6 @@
+extends:
+  - "pi-extension"
+files:
+  - "package.json"
+  - "tsconfig.json"
+  - "src/**/*.ts"
