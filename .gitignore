@@ -1,0 +1,10 @@
+node_modules/
+package-lock.json
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+*.tgz
+.DS_Store
+.pi/
+.env

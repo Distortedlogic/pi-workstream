@@ -1,0 +1,31 @@
+{
+	"name": "pi-workstream",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "Coordinate independent Pi Tasks, Queue, and Context Compress extensions.",
+	"license": "MIT",
+	"engines": { "node": ">=22.19.0" },
+	"exports": { ".": "./src/workstream.ts" },
+	"pi": { "extensions": ["./src/workstream.ts"] },
+	"files": ["src", "LICENSE", "README.md", "PROTOCOL.md", "ORIGIN.md"],
+	"scripts": {
+		"test": "vitest run test/plan.test.ts test/workstream.integration.test.ts",
+		"test:e2e": "vitest run test/workstream.e2e.test.ts --testTimeout=180000",
+		"check": "npm run typecheck && npm run lint",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"format": "biome check --write ."
+	},
+	"dependencies": { "typebox": "1.3.7" },
+	"peerDependencies": { "@earendil-works/pi-coding-agent": "0.84.3" },
+	"devDependencies": {
+		"@biomejs/biome": "1.9.4",
+		"@earendil-works/pi-ai": "0.84.3",
+		"@earendil-works/pi-coding-agent": "0.84.3",
+		"@types/node": "22.20.1",
+		"p-wait-for": "6.0.0",
+		"typescript": "5.9.3",
+		"vitest": "4.1.11"
+	}
+}
